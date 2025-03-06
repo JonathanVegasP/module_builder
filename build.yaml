@@ -1,0 +1,7 @@
+builders:
+  modules:
+    import: "package:module_builder/module_builder.dart"
+    builder_factories: ["moduleBuilder"]
+    build_extensions: {"$lib$": ["config/modules/modules.dart"]}
+    auto_apply: dependents
+    build_to: source
