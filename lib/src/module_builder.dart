@@ -30,32 +30,29 @@ final class ModuleBuilder extends Builder {
 
       final reader = LibraryReader(await buildStep.resolver.libraryFor(input));
 
-      final modules = reader.classes
-          .where(
-            (el) =>
-                superModuleChecker
-                    .isAssignableFrom(el),
-          )
-          .map((el) {
-            if (el.unnamedConstructor == null) {
-              throw UnsupportedError(
-                '${el.name}: Cannot use Module without an unnamed constructor',
-              );
-            }
+      final cls = reader.classes;
 
-            return el.name;
-          })
-          .join('(),');
+      var isLibraryEmpty = true;
 
-      if (modules.isEmpty) continue;
+      for(final el in cls) {
+        if(!superModuleChecker.isAssignableFrom(el)) continue;
 
-      if (isConst.isNotEmpty) {
-        for (final c in reader.classes) {
-          if (c.unnamedConstructor!.isConst != true) {
-            isConst = '';
-          }
+        if (el.unnamedConstructor == null) {
+          throw UnsupportedError(
+            '${el.name}: Cannot use Module without an unnamed constructor',
+          );
         }
+
+        if (el.unnamedConstructor!.isConst != true) {
+          isConst = '';
+        }
+
+        buffer.write('${el.name}(),');
+
+        if(isLibraryEmpty) isLibraryEmpty = false;
       }
+
+      if (isLibraryEmpty) continue;
 
       imports.add(
         Directive(
@@ -66,8 +63,6 @@ final class ModuleBuilder extends Builder {
                     'package:${input.package}/${input.pathSegments.skip(1).join('/')}',
         ),
       );
-
-      buffer.write('$modules(),');
     }
 
     final library = Library(
