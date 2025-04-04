@@ -57,14 +57,7 @@ final class ModuleBuilder extends Builder {
                     b
                       ..name = "Modules"
                       ..modifier = ClassModifier.final$
-                      ..constructors.add(
-                        Constructor(
-                          (b) =>
-                              b
-                                ..name = "_"
-                                ..constant = true,
-                        ),
-                      )
+                      ..abstract = true
                       ..methods.add(
                         Method(
                           (b) =>
