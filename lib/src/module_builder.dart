@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:ui';
 
 import 'package:build/build.dart';
 import 'package:code_builder/code_builder.dart';
@@ -20,55 +21,36 @@ final class ModuleBuilder extends Builder {
 
   @override
   FutureOr<void> build(BuildStep buildStep) async {
-    final imports = <Directive>[];
-    final buffer = StringBuffer();
+    final importDirectives = <Directive>[];
+    final moduleInstancesBuffer = StringBuffer();
 
-    var isConst = 'const ';
+    bool hasNonConstConstructor = false;
 
-    await for (final input in buildStep.findAssets(_allFiles)) {
-      if (!await buildStep.resolver.isLibrary(input)) continue;
+    final moduleFiles = await buildStep.findAssets(_allFiles).toList();
+    final moduleProcessingFutures = <Future<void>>[];
 
-      final reader = LibraryReader(await buildStep.resolver.libraryFor(input));
-
-      final cls = reader.classes;
-
-      var isLibraryEmpty = true;
-
-      for(final el in cls) {
-        if(!superModuleChecker.isAssignableFrom(el)) continue;
-
-        if (el.unnamedConstructor == null) {
-          throw UnsupportedError(
-            '${el.name}: Cannot use Module without an unnamed constructor',
-          );
-        }
-
-        if (el.unnamedConstructor!.isConst != true) {
-          isConst = '';
-        }
-
-        buffer.write('${el.name}(),');
-
-        if(isLibraryEmpty) isLibraryEmpty = false;
-      }
-
-      if (isLibraryEmpty) continue;
-
-      imports.add(
-        Directive(
-          (b) =>
-              b
-                ..type = DirectiveType.import
-                ..url =
-                    'package:${input.package}/${input.pathSegments.skip(1).join('/')}',
+    for (final asset in moduleFiles) {
+      moduleProcessingFutures.add(
+        _processModuleAsset(
+          asset,
+          buildStep,
+          importDirectives,
+          moduleInstancesBuffer,
+          () {
+            hasNonConstConstructor = true;
+          },
         ),
       );
     }
 
-    final library = Library(
+    await Future.wait(moduleProcessingFutures);
+
+    if (moduleInstancesBuffer.isEmpty) return;
+
+    final generatedLibrary = Library(
       (b) =>
           b
-            ..directives.addAll(imports)
+            ..directives.addAll(importDirectives)
             ..body.add(
               Class(
                 (b) =>
@@ -93,7 +75,7 @@ final class ModuleBuilder extends Builder {
                                 ..returns = refer('Future<void>')
                                 ..modifier = MethodModifier.async
                                 ..body = Code(
-                                  'await Future.wait($isConst[$buffer].map((el) => el.init()))',
+                                  'await Future.wait(${hasNonConstConstructor ? '' : 'const '}[$moduleInstancesBuffer].map((module) => module.init()))',
                                 ),
                         ),
                       ),
@@ -101,16 +83,65 @@ final class ModuleBuilder extends Builder {
             ),
     );
 
-    final output = AssetId(
+    final outputFile = AssetId(
       buildStep.inputId.package,
       join('lib', 'config', 'modules', 'modules.dart'),
     );
 
     return buildStep.writeAsString(
-      output,
+      outputFile,
       DartFormatter(
         languageVersion: DartFormatter.latestLanguageVersion,
-      ).format('${library.accept(DartEmitter.scoped())}'),
+      ).format('${generatedLibrary.accept(DartEmitter.scoped())}'),
+    );
+  }
+
+  static Future<void> _processModuleAsset(
+    AssetId asset,
+    BuildStep buildStep,
+    List<Directive> importDirectives,
+    StringBuffer moduleInstancesBuffer,
+    VoidCallback markNonConst,
+  ) async {
+    if (!await buildStep.resolver.isLibrary(asset)) return;
+
+    final libraryReader = LibraryReader(
+      await buildStep.resolver.libraryFor(asset),
+    );
+    final moduleClasses = libraryReader.classes.where(
+      superModuleChecker.isAssignableFrom,
+    );
+
+    if (moduleClasses.isEmpty) return;
+
+    bool hasValidModules = false;
+
+    for (final moduleClass in moduleClasses) {
+      final unnamedConstructor = moduleClass.unnamedConstructor;
+      if (unnamedConstructor == null) {
+        throw UnsupportedError(
+          '${moduleClass.name}: Cannot use Module without an unnamed constructor',
+        );
+      }
+
+      if (!unnamedConstructor.isConst) {
+        markNonConst();
+      }
+
+      moduleInstancesBuffer.write('${moduleClass.name}(),');
+      hasValidModules = true;
+    }
+
+    if (!hasValidModules) return;
+
+    importDirectives.add(
+      Directive(
+        (b) =>
+            b
+              ..type = DirectiveType.import
+              ..url =
+                  'package:${asset.package}/${asset.pathSegments.skip(1).join('/')}',
+      ),
     );
   }
 }
